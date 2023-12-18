@@ -121,7 +121,84 @@ library(lmtest)
 ggplot(wine.df, aes(x = alcohol, y = quality, color = type)) +
   geom_point() +
   labs(x = "Alcohol", y = "Quality")
+
 ```
+According to the chart, it seems like the mid ragned quailty wines (5 - 7) shows a big variablity on the strongness of Alcohol, however, the low quality wines have lower Alcohol than the high quality wines.
+```{r}
+library(dplyr)
+
+columns_to_plot <- c("fixed.acidity", "volatile.acidity", "citric.acid", "residual.sugar", 
+                     "chlorides", "free.sulfur.dioxide", "total.sulfur.dioxide", 
+                     "density", "pH", "sulphates", "alcohol")
+
+create_plot <- function(column_name) {
+  grouped_data <- wine.df %>%
+    group_by(quality) %>%
+    summarise(mean_value = mean(get(column_name), na.rm = TRUE)) %>%
+    arrange(quality)
+
+  ggplot(grouped_data, aes(x = quality, y = mean_value, fill = mean_value)) +
+    geom_text(aes(label = round(mean_value, 2)), vjust = -0.3, size = 3) +
+    geom_col() +
+    scale_fill_gradient(low = "white", high = "red") +
+    theme_minimal() +
+    labs(title = paste("Mean", column_name, "by Quality"), x = "Quality", y = paste("Mean", column_name))
+}
+
+plots <- lapply(columns_to_plot, create_plot)
+print(plots)
+```
+We can say that the increase in fixed acidity positively affects the given vote.but it is difficult to make a full conclusion at this stage.
+we can make a more precise sentence according to the comment we made above. The decrease in volatile acidity affects the votes positively.
+we see that the increase in citric acid positively affected the votes
+It seems difficult to make an inference about residual sugar from here.
+The decrease in chlorides positively affects the votes cast.
+It doesn't seem easy to comment on free sulfur dioxide either. The 13, 14 levels seem to have been voted well.
+It doesn't make sense to comment on total sulfur dioxide. It changed according to the votes. There is no order.
+The intensity is almost the same in all votes, but there is only a slight decrease. Density drop seems to have a positive effect on the votes.
+We can say that the decrease in pH affects the votes positively.
+It is clear from here that the increase in sulphates has a positive effect.
+In general, it can be said that the increase in alcohol ratio affects the votes well.
+
+## Distribution charts
+
+```{r}
+dist_plot <- function(column_name) {
+  mean_value <- mean(data[[column_name]], na.rm = TRUE)
+  sd_value <- sd(data[[column_name]], na.rm = TRUE)
+
+  plot <- ggplot(data, aes_string(x = column_name)) +
+    geom_histogram(aes(y = ..density..), binwidth = 1, fill = "#943126", color = "black") +
+    geom_density(alpha = .2, fill = "#DAA520") +
+    stat_function(fun = dnorm, args = list(mean = mean_value, sd = sd_value), 
+                  color = "#A04000", linetype = "dashed") + # Adding normal distribution curve
+    labs(title = paste("Distribution of", column_name), x = column_name, y = "Density") +
+    theme_minimal()
+
+  return(plot)
+}
+
+
+dist_plots <- lapply(columns_to_plot, dist_plot)
+print(dist_plots)
+
+```
+For fixed acidicty we see that there is a skewness to the right. We need to fix this.
+
+## Skewness Correction
+
+
+```{r}
+# Skewness Correction
+
+```
+
+
+
+
+
+
+
 ```{r pressure, echo=FALSE}
 
 # Fit regression model
