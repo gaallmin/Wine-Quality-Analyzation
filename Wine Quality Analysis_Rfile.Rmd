@@ -1,0 +1,1166 @@
+---
+title: "hw2"
+author: "Min Jegal, Alba Arribas"
+date: "2023-12-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Classification and regression
+
+For this assignment we are using a wine database https://archive.ics.uci.edu/dataset/186/wine+quality. This database is divided in two, both of them with the same 12 variables. We have the red and white database which later on we will combine. 
+this database consist on the following values:
+
+**fixed acidity** : most acids involved with wine or fixed or nonvolatile (do not evaporate readily)
+
+**volatile acidity** : the amount of acetic acid in wine, which at too high of levels can lead to an unpleasant, vinegar taste
+
+**citric acid** : found in small quantities, citric acid can add 'freshness' and flavor to wines
+
+**residual sugar** : the amount of sugar remaining after fermentation stops, it's rare to find wines with less than 1 gram/liter and
+
+**chlorides** : the amount of salt in the wine
+
+**free sulfur dioxide** : the free form of SO2 exists in equilibrium between molecular SO2 (as a dissolved gas) and bisulfite ion; it prevents
+
+**total sulfur dioxide** : amount of free and bound forms of S02; in low concentrations, SO2 is mostly undetectable in wine, but at free SO2
+
+**density** : the density of water is close to that of water depending on the percent alcohol and sugar content
+
+**ph** : describes how acidic or basic a wine is on a scale from 0 (very acidic) to 14 (very basic); most wines are between 3-4 on the
+
+**sulphates** : a wine additive which can contribute to sulfur dioxide gas (S02) levels, wich acts as an antimicrobial and
+
+**alcohol sulfur dioxide** : the percent alcohol content of the wine
+
+**quality** : output variable (based on sensory data, score between 0 and 10)
+
+So our main goal here will be to determine which of this factors affect the wine the most and how it differs from one wine type to another.
+
+```{r}
+#setwd("A:/AI_STUDY/Practice/2023-2024 MADRID/Statistical Learning/HW2/Statistical-Learning_Wine/wine+quality")
+white_wine = read.csv(file = "winequality-white.csv", header=T, sep=";", dec=".")
+red_wine = read.csv(file = "winequality-red.csv", header=T, sep=";", dec=".")
+head(white_wine)
+```
+
+Here, we combine both databases adding new column called type with a categorical variable indicating if the wine is red or white.
+
+
+```{r}
+white_wine$type <- "white"
+red_wine$type <- "red"
+
+# Combine the two dataframes
+wine.df <- rbind(white_wine, red_wine)
+head(wine.df)
+```
+
+```{r}
+summary(wine.df)
+dim(wine.df)
+str(wine.df)
+```
+
+Now we check if there are any missing values.
+
+```{r}
+barplot(colMeans(is.na(wine.df)), las=2)
+barplot(c(any(is.na(wine.df))), las=2)
+```
+
+Seems like there is no NAs.
+After that, we check for any outliers. Thinking of the data, the outliers will detect few excellent or poor wines.
+
+```{r}
+
+library(outliers)
+boxplot(subset(wine.df, select = -c(13)))$out
+boxplot(subset(wine.df, select = -c(6,7,13)))$out
+```
+
+We can see that there are not negative values and the outliers we have might indicate that a wine is specially good or specially bad therefore getting rid of them will result in a loss of information. Therefore, to handle this outliers we could just standardize the code so it minimizes the distortion.
+
+
+```{r}
+library(corrplot)
+correlation_matrix <- cor(wine.df[, -which(names(wine.df) == "type")])
+corrplot(correlation_matrix, method = "color", tl.cex = 0.7, tl.col = "black", addrect = 2)
+```
+
+From this matrix we can say that almost all variables are correlated in way but there are some that stand out such as the positive correlation between the total.sulfur.dioxide and the free.sulfur.dioxide which could make sense and in the other hand, the alcohol and the sensitive are negatively correlated.
+
+
+## Classification
+
+
+Quality Prediction : to predict the quality of the wine based on its physicochemical properties. 
+
+
+
+```{r}
+library(ggplot2)
+library(lmtest)
+
+ggplot(wine.df, aes(x = alcohol, y = quality, color = type)) +
+  geom_point() +
+  labs(x = "Alcohol", y = "Quality")
+
+```
+
+According to the chart, it seems like the mid ragned quailty wines (5 - 7) shows a big variablity on the strongness of Alcohol, however, the low quality wines have lower Alcohol than the high quality wines.
+
+
+
+### Distribution charts
+
+```{r}
+library(ggplot2)
+library(gridExtra)
+library(dplyr)
+
+columns_to_plot <- c("fixed.acidity", "volatile.acidity", "citric.acid", "residual.sugar", 
+                     "chlorides", "free.sulfur.dioxide", "total.sulfur.dioxide", 
+                     "density", "pH", "sulphates", "alcohol")
+
+precomputed_stats <- lapply(columns_to_plot, function(column_name) {
+  list(
+    mean_sd = wine.df %>%
+      summarise(mean = mean(get(column_name), na.rm = TRUE), 
+                sd = sd(get(column_name), na.rm = TRUE)),
+    summary_by_quality = wine.df %>%
+      group_by(quality) %>%
+      summarise(mean_value = mean(get(column_name), na.rm = TRUE)) %>%
+      arrange(quality)
+  )
+})
+
+create_plots <- function(column_name, stats) {
+  box_plot <- ggplot(wine.df, aes(x = factor(quality), y = .data[[column_name]])) +
+    geom_boxplot(aes(fill = factor(quality))) +
+    labs(title = paste("Boxplot of", column_name, "& quality"), x = "Quality", y = column_name) +
+    theme_minimal() +
+    theme(plot.title = element_text(color = "black", size = 11, face = "bold"))
+
+  dist_plot <- ggplot(wine.df, aes(x = .data[[column_name]])) +
+    geom_histogram(aes(y = ..density..), binwidth = 1, fill = "#943126", color = "black") +
+    geom_density(alpha = .2, fill = "#DAA520") +
+    stat_function(fun = dnorm, args = with(stats$mean_sd, list(mean = mean, sd = sd)), 
+                  color = "#A04000", linetype = "dashed") +
+    labs(title = paste("Distribution of", column_name), x = column_name, y = "Density") +
+    theme_minimal()
+
+  bar_plot <- ggplot(stats$summary_by_quality, aes(x = quality, y = mean_value, fill = mean_value)) +
+    geom_text(aes(label = round(mean_value, 2)), vjust = -0.3, size = 3) +
+    geom_col() +
+    scale_fill_gradient(low = "white", high = "#DAA520") +
+    theme_minimal() +
+    labs(title = paste("Mean", column_name, "by Quality"), x = "Quality", y = paste("Mean", column_name))
+
+  grid.arrange(box_plot, dist_plot, bar_plot, nrow = 2, ncol = 2)
+}
+
+plot_list <- mapply(create_plots, columns_to_plot, precomputed_stats, SIMPLIFY = FALSE, USE.NAMES = TRUE)
+for (name in names(plot_list)) {
+  print(plot_list[[name]])
+}
+
+
+```
+
+First of all generally we can see a lot of outlier. Let's consider how each category is related to Quality and deal with the outliers.
+
+**fixed acidity**
+Fixed acidity may not have much effect on splitting votes.
+
+On the second graph, we see that there is a skewness to the right. We need to fix this.
+
+**volatile acidity**
+The decrease in volatile acidity seems to affect the votes positively.
+
+When we examine the second graph, we see that the distribution is good.
+
+**citric acid**
+We can say that the increase in citric acid affects the votes positively.
+
+**residual sugar**
+The estimate of residual sugar does not seem to have much effect.
+
+We see that there is a skewness towards the right according to the normal distribution
+
+**chlorides**
+We see that the decrease in chlorides has a positive effect on the votes..
+
+
+**free sulfur dioxide**
+When we examine the gariks here, we see that the graph is tailing to the right, we will correct this below.
+
+**total sulfur dioxide**
+When we examine these graphs, we do not see that they have a regular effect on the target variable. It is not easy to draw conclusions.
+
+Here we see a skewness to the right.
+
+**density**
+It seems quite difficult to predict the effect on the target variable.
+
+When we examine the scatterplot, we see that it has a normal distribution.
+
+**pH**
+We see that the decrease in pH value has a positive effect on the votes.
+
+We see that the scatterplot has normal, outlier values. We need to identify and remove outliers.
+
+**sulphates**
+We see that the higher the value of the sulphates, the more positive the votes are.
+
+
+**alcohol**
+When the graph is examined in general, it can be said that the increase in alcohol has a positive effect on the votes.
+
+When we examine the second graph, we see that there is skewness. We will fix this.
+
+```{r}
+ggplot(wine.df, aes(x = quality)) +
+  geom_bar() +
+  xlab("Quality") +
+  ggtitle("Quality Distribution") +
+  theme(plot.title = element_text(color = "black", size = 11, face = "bold"))
+
+quality_counts <- table(wine.df$quality)
+quality_labels <- names(quality_counts)
+quality_percent <- round(100 * quality_counts / sum(quality_counts), 2)
+
+explode <- rep(0.1, length(quality_counts)) 
+
+cum_percents <- cumsum(quality_counts) / sum(quality_counts)
+label_positions <- cum_percents - quality_counts / sum(quality_counts) / 2
+
+label_radius <- 1.2  
+label_x <- cos(2 * pi * label_positions) * label_radius
+label_y <- sin(2 * pi * label_positions) * label_radius
+
+pie(quality_counts, labels = NA, col = rainbow(length(quality_counts)), 
+    main = "Quality Distribution", init.angle = 60, radius = 1)
+legend("topright", legend = quality_labels, fill = rainbow(length(quality_labels)))
+
+
+text(label_x, label_y, labels = paste(quality_labels, ": ", quality_percent, "%", sep = ""))
+
+legend("topright", legend = quality_labels, fill = rainbow(length(quality_labels)))
+labels = paste(quality_labels, ": ", quality_percent, "%", sep = "")
+
+```
+
+Our dataset appears to have a significant class imbalance, especially with very few data points for quality ratings of 9 ,3. Class imbalance can lead to models that are biased towards the majority class.
+Thus we will use method such as resampling, providing class weights, ensemble methods to slove the imbalance problem. Moreover, with the outliers we will consider how to deal with after fix the skewness in the data.
+
+
+### Skewness Correction
+In this section, we will try to correct the skewness in some features of our data. We will do this by seeing them through graphs.
+
+fixed acidity, residual sugar ,free sulfur dioxide, total sulfur dioxide, sulphates
+
+```{r}
+# Skewness Correction
+
+library(MASS)
+library(car)
+
+### fixed acidity
+mu <- mean(wine.df$`fixed.acidity`, na.rm = TRUE)
+sigma <- sd(wine.df$`fixed.acidity`, na.rm = TRUE)
+cat(sprintf("mu fixed acidity: %f, sigma fixed acidity: %f\n", mu, sigma))
+```
+
+
+```{r}
+ggplot(wine.df, aes(x = `fixed.acidity`)) +
+  geom_histogram(aes(y = ..density..), binwidth = 0.5, fill = "orange", color = "black") +
+  stat_function(fun = dnorm, args = list(mean = mu, sd = sigma), color = "darkred") +
+  ggtitle("fixed acidity Distplot") +
+  theme(plot.title = element_text(color = "darkred"))
+qqPlot(wine.df$`fixed.acidity`, main = "Q-Q Plot for fixed acidity")
+
+```
+
+
+
+```{r}
+# Log Transformation
+if (all(wine.df$`fixed.acidity` > 0)) {
+  wine.df$`fixed.acidity` <- log(wine.df$`fixed.acidity`)
+} else {
+  stop("Log transformation requires all values to be positive.")
+}
+
+mu_transformed <- mean(wine.df$`fixed.acidity`, na.rm = TRUE)
+sigma_transformed <- sd(wine.df$`fixed.acidity`, na.rm = TRUE)
+cat(sprintf("Transformed mu fixed.acidity: %f, sigma fixed.acidity: %f\n", mu_transformed, sigma_transformed))
+```
+
+```{r}
+# after transformation
+par(mfrow = c(1, 2))
+ggplot(wine.df, aes(x = `fixed.acidity`)) +
+  geom_histogram(aes(y = ..density..), binwidth = 0.5, fill = "orange", color = "black") +
+  stat_function(fun = dnorm, args = list(mean = mu_transformed, sd = sigma_transformed), color = "darkred") +
+  ggtitle("Transformed fixed acidity Distplot") +
+  theme(plot.title = element_text(color = "darkred"))
+
+qqPlot(wine.df$`fixed.acidity`, main = "Q-Q Plot for Transformed fixed acidity")
+```
+
+```{r}
+### residual sugar
+mu <- mean(wine.df$`residual.sugar`, na.rm = TRUE)
+sigma <- sd(wine.df$`residual.sugar`, na.rm = TRUE)
+cat(sprintf("mu residual sugar: %f, sigma residual sugar: %f\n", mu, sigma))
+```
+
+```{r}
+par(mfrow = c(1, 2))
+ggplot(wine.df, aes(x = `residual.sugar`)) +
+  geom_histogram(aes(y = ..density..), binwidth = 0.5, fill = "orange", color = "black") +
+  stat_function(fun = dnorm, args = list(mean = mu, sd = sigma), color = "darkred") +
+  ggtitle("Residual Sugar Distplot") +
+  theme(plot.title = element_text(color = "darkred"))
+qqPlot(wine.df$`residual.sugar`, main = "Q-Q Plot for Residual Sugar")
+```
+
+```{r}
+# Log Transformation
+if (all(wine.df$`residual.sugar` > 0)) {
+  wine.df$`residual.sugar` <- log(wine.df$`residual.sugar`)
+} else {
+  stop("Log transformation requires all values to be positive.")
+}
+mu_transformed <- mean(wine.df$`residual.sugar`, na.rm = TRUE)
+sigma_transformed <- sd(wine.df$`residual.sugar`, na.rm = TRUE)
+cat(sprintf("Transformed mu residual sugar: %f, sigma residual sugar: %f\n", mu_transformed, sigma_transformed))
+```
+
+```{r}
+par(mfrow = c(1, 2))
+ggplot(wine.df, aes(x = `residual.sugar`)) +
+  geom_histogram(aes(y = ..density..), binwidth = 0.5, fill = "orange", color = "black") +
+  stat_function(fun = dnorm, args = list(mean = mu_transformed, sd = sigma_transformed), color = "darkred") +
+  ggtitle("Transformed Residual Sugar Distplot") +
+  theme(plot.title = element_text(color = "darkred"))
+qqPlot(wine.df$`residual.sugar`, main = "Q-Q Plot for Transformed Residual Sugar")
+```
+
+
+```{r}
+### free sulfur dioxide
+mu <- mean(wine.df$`free.sulfur.dioxide`, na.rm = TRUE)
+sigma <- sd(wine.df$`free.sulfur.dioxide`, na.rm = TRUE)
+cat(sprintf("mu free sulfur dioxide: %f, sigma free sulfur dioxide: %f\n", mu, sigma))
+```
+
+```{r}
+par(mfrow = c(1, 2))
+ggplot(wine.df, aes(x = `free.sulfur.dioxide`)) +
+  geom_histogram(aes(y = ..density..), binwidth = 0.5, fill = "orange", color = "black") +
+  stat_function(fun = dnorm, args = list(mean = mu, sd = sigma), color = "darkred") +
+  ggtitle("Free Sulfur Dioxide Distplot") +
+  theme(plot.title = element_text(color = "darkred"))
+qqPlot(wine.df$`free.sulfur.dioxide`, main = "Q-Q Plot for Free Sulfur Dioxide")
+```
+
+```{r}
+if (all(wine.df$`free.sulfur.dioxide` > 0)) {
+  wine.df$`free.sulfur.dioxide` <- log(wine.df$`free.sulfur.dioxide`)
+} else {
+  stop("Log transformation requires all values to be positive.")
+}
+mu_transformed <- mean(wine.df$`free.sulfur.dioxide`, na.rm = TRUE)
+sigma_transformed <- sd(wine.df$`free.sulfur.dioxide`, na.rm = TRUE)
+cat(sprintf("Transformed mu free sulfur dioxide: %f, sigma free sulfur dioxide: %f\n", mu_transformed, sigma_transformed))
+```
+
+```{r}
+par(mfrow = c(1, 2))
+ggplot(wine.df, aes(x = `free.sulfur.dioxide`)) +
+  geom_histogram(aes(y = ..density..), binwidth = 0.5, fill = "orange", color = "black") +
+  stat_function(fun = dnorm, args = list(mean = mu_transformed, sd = sigma_transformed), color = "darkred") +
+  ggtitle("Transformed Free Sulfur Dioxide Distplot") +
+  theme(plot.title = element_text(color = "darkred"))
+qqPlot(wine.df$`free.sulfur.dioxide`, main = "Q-Q Plot for Transformed Free Sulfur Dioxide")
+```
+
+```{r}
+### total sulfur dioxide
+mu <- mean(wine.df$`total.sulfur.dioxide`, na.rm = TRUE)
+sigma <- sd(wine.df$`total.sulfur.dioxide`, na.rm = TRUE)
+cat(sprintf("mu total sulfur dioxide: %f, sigma total sulfur dioxide: %f\n", mu, sigma))
+```
+
+```{r}
+par(mfrow = c(1, 2))
+ggplot(wine.df, aes(x = `total.sulfur.dioxide`)) +
+  geom_histogram(aes(y = ..density..), binwidth = 0.5, fill = "orange", color = "black") +
+  stat_function(fun = dnorm, args = list(mean = mu, sd = sigma), color = "darkred") +
+  ggtitle("Total Sulfur Dioxide Distplot") +
+  theme(plot.title = element_text(color = "darkred"))
+qqPlot(wine.df$`total.sulfur.dioxide`, main = "Q-Q Plot for Total Sulfur Dioxide")
+```
+
+```{r}
+if (all(wine.df$`total.sulfur.dioxide` > 0)) {
+  wine.df$`total.sulfur.dioxide` <- log(wine.df$`total.sulfur.dioxide`)
+} else {
+  stop("Log transformation requires all values to be positive.")
+}
+mu_transformed <- mean(wine.df$`total.sulfur.dioxide`, na.rm = TRUE)
+sigma_transformed <- sd(wine.df$`total.sulfur.dioxide`, na.rm = TRUE)
+cat(sprintf("Transformed mu total sulfur dioxide: %f, sigma total sulfur dioxide: %f\n", mu_transformed, sigma_transformed))
+```
+
+```{r}
+par(mfrow = c(1, 2))
+ggplot(wine.df, aes(x = `total.sulfur.dioxide`)) +
+  geom_histogram(aes(y = ..density..), binwidth = 0.5, fill = "orange", color = "black") +
+  stat_function(fun = dnorm, args = list(mean = mu_transformed, sd = sigma_transformed), color = "darkred") +
+  ggtitle("Transformed Total Sulfur Dioxide Distplot") +
+  theme(plot.title = element_text(color = "darkred"))
+qqPlot(wine.df$`total.sulfur.dioxide`, main = "Q-Q Plot for Transformed Total Sulfur Dioxide")
+```
+
+```{r}
+### alcohol
+mu <- mean(wine.df$`alcohol`, na.rm = TRUE)
+sigma <- sd(wine.df$`alcohol`, na.rm = TRUE)
+cat(sprintf("mu alcohol: %f, sigmaalcohol: %f\n", mu, sigma))
+```
+
+```{r}
+par(mfrow = c(1, 2))
+ggplot(wine.df, aes(x = `alcohol`)) +
+  geom_histogram(aes(y = ..density..), binwidth = 0.5, fill = "orange", color = "black") +
+  stat_function(fun = dnorm, args = list(mean = mu, sd = sigma), color = "darkred") +
+  ggtitle("Alcohol Distplot") +
+  theme(plot.title = element_text(color = "darkred"))
+qqPlot(wine.df$`alcohol`, main = "Q-Q Plot for Alcohol")
+```
+
+```{r}
+if (all(wine.df$`alcohol` > 0)) {
+  wine.df$`alcohol` <- log(wine.df$`alcohol`)
+} else {
+  stop("Log transformation requires all values to be positive.")
+}
+mu_transformed <- mean(wine.df$`alcohol`, na.rm = TRUE)
+sigma_transformed <- sd(wine.df$`alcohol`, na.rm = TRUE)
+cat(sprintf("Transformed mu alcohol: %f, sigma alcohol: %f\n", mu_transformed, sigma_transformed))
+```
+
+```{r}
+par(mfrow = c(1, 2))
+ggplot(wine.df, aes(x = `alcohol`)) +
+  geom_histogram(aes(y = ..density..), binwidth = 0.5, fill = "orange", color = "black") +
+  stat_function(fun = dnorm, args = list(mean = mu_transformed, sd = sigma_transformed), color = "darkred") +
+  ggtitle("Transformed Alcohol") +
+  theme(plot.title = element_text(color = "darkred"))
+qqPlot(wine.df$`alcohol`, main = "Q-Q Plot for Transformed Alcohol")
+```
+
+### Outlier Detection
+
+We will detect outliers in our data. and we will extract them from the data.
+When we analyzed the outliers across the entire dataset, we noticed that the process removed data corresponding to less frequently occurring quality ratings, specifically those with quality scores of 1, 2, 8, and 9. Thus, we conducted outlier detection within each individual quality class.
+
+```{r}
+detect_outliers_class_specific <- function(df, features, class_col) {
+  outlier_indices <- list()
+
+  unique_classes <- unique(df[[class_col]])
+  for (class in unique_classes) {
+    class_df <- df[df[[class_col]] == class, ]
+    class_outliers <- numeric()
+    
+    if (nrow(class_df) > 0) {
+      for (c in features) {
+        Q1 <- quantile(class_df[[c]], 0.25, na.rm = TRUE)
+        Q3 <- quantile(class_df[[c]], 0.75, na.rm = TRUE)
+        IQR <- Q3 - Q1
+        outlier_step <- IQR * 1.5
+
+        # Detect outliers within class
+        outliers <- which(class_df[[c]] < Q1 - outlier_step | class_df[[c]] > Q3 + outlier_step)
+        class_outliers <- c(class_outliers, outliers)
+      }
+    }
+    
+    outlier_indices[[as.character(class)]] <- unique(class_outliers) + min(which(df[[class_col]] == class)) - 1
+  }
+  
+  return(outlier_indices)
+}
+
+features <- colnames(wine.df)[1:(ncol(wine.df) - 1)]
+class_col <- "quality"
+outlier_rows <- detect_outliers_class_specific(wine.df, features, class_col)
+
+for (class in names(outlier_rows)) {
+  num_outliers <- length(outlier_rows[[class]])
+  cat(paste("Quality", class, "has", num_outliers, "outliers.\n"))
+}
+```
+```{r}
+features <- colnames(wine.df)[1:(ncol(wine.df) - 1)]
+class_col <- "quality"
+outlier_rows <- detect_outliers_class_specific(wine.df, features, class_col)
+
+for (class in unique(wine.df[[class_col]])) {
+  class_as_character <- as.character(class)
+  total_in_class <- sum(wine.df[[class_col]] == class)
+  if (is.null(outlier_rows[[class_as_character]])) {
+    cat(paste("Quality", class_as_character, "has 0 outliers out of", total_in_class, "data, 0%.\n"))
+  } else {
+    num_outliers <- length(outlier_rows[[class_as_character]])
+    percentage_outliers <- round((num_outliers / total_in_class) * 100, 2)
+    cat(paste("Quality", class_as_character, "has", num_outliers, "outliers out of", total_in_class, "data,", percentage_outliers, "%.\n"))
+  }
+}
+
+```
+
+On the box plots that we looked up previously, the number of outliers seemed a lot. However from the result that we just had, it seems like the 'outliers' take significant proportion on the classes. In the class 8, 4, 3, 9, outliers might represent important characteristics of those classes with high possibility, and removing them might lead to loss of valuable information.With the class 6,5, ,7, some (maybe under 10%) outliers might represent outstanding values but seems like around 20% of data are more than 1.5 IQR below Q1 or more than 1.5 IQR above Q3. However when we look up on the box plot thoroughly ,that we made previously, we can see that 'outliers' represents a unique tendency that make it possible to classify the class itself to the others. Thus, we decided not to delete the oultiers but try to use models that are robust to outliers such as tree-based ensemble methods like Random Forests and Gradient Boosting.
+
+
+### Balancing Data
+Our data has severe class imbalanc, especially the minority class is very small (like Quality 9 class), therefore we decided that resampling might be more effective.
+
+Due to some R techinical issues on both of our laptops, we couldn't use SMOTE, 
+We considered a combination approach to avoid having too few instances of the majority classes after balancing. We use a mix of oversampling the minority classes and undersampling the majority classes to achieve a reasonable balance that doesn't overly disadvantage either group.
+
+```{r}
+set.seed(123) 
+
+target_size_minority <- 500
+
+target_size_majority <- 1000  
+
+oversample_class <- function(df, class, target_size) {
+  class_data <- df[df$quality == class, ]
+  oversampled_class_data <- class_data[sample(1:nrow(class_data), target_size, replace = TRUE), ]
+  return(oversampled_class_data)
+}
+
+# Oversample minority classes
+minority_classes <- c(3, 4, 8, 9)
+oversampled_classes <- lapply(minority_classes, function(class) oversample_class(wine.df, class, target_size_minority))
+
+# Undersample majority classes
+majority_classes <- c(5, 6, 7)
+undersampled_classes <- lapply(majority_classes, function(class) oversample_class(wine.df, class, target_size_majority))
+
+# Combine the balanced classes with the rest of the data
+balanced_data <- rbind(
+  do.call(rbind, oversampled_classes), 
+  do.call(rbind, undersampled_classes),
+  wine.df[!wine.df$quality %in% c(minority_classes, majority_classes), ]
+)
+
+# Check the new distribution
+table(balanced_data$quality)
+
+
+```
+
+### Modeling
+Sine we have a lot of outliers in our data we thought using models that are robust to outliers is wise. 
+First we will see the result of Naive Bayes which is a statistical learning method, and we will use Random Forest as machine learning models.
+
+```{r}
+#install.packages(c("e1071", "randomForest", "gbm"))
+
+library(e1071)
+library(randomForest)
+library(gbm)
+```
+We have a dataset where 'quality' is our target variable, and it comprises several classes. Other variables in the dataset are predictors or features.
+
+```{r}
+set.seed(123)
+balanced_data <- subset(balanced_data, select = -type)
+train_indices <- sample(1:nrow(balanced_data), size = 0.7 * nrow(balanced_data))
+train_data <- balanced_data[train_indices, ]
+test_data <- balanced_data[-train_indices, ]
+```
+
+### Naive Bayes Model
+
+Cross-validation, especially in a dataset like ours where certain quality classes might be underrepresented, helps in obtaining a more reliable estimate of model performance. It mitigates the risk of overfitting and provides a better understanding of how the model might perform on unseen data. So first, we will look up on pure Navie Bayes model's accuracy and then implement cross validation.
+```{r}
+nb_model <- naiveBayes(quality ~ ., data = train_data)
+nb_pred <- predict(nb_model, test_data[-ncol(test_data)])
+nb_accuracy <- sum(nb_pred == test_data$quality) / nrow(test_data)
+print(paste("Naive Bayes accuracy:", nb_accuracy))
+
+library(caret)
+
+train_data$quality <- as.factor(train_data$quality)
+control <- trainControl(method = "cv", number = 10)
+cv_naive_bayes_model <- train(quality ~ ., data = train_data, method = "naive_bayes", trControl = control)
+print(cv_naive_bayes_model)
+
+```
+#### Interpretation
+Before the cross validation the accuarcy was 37% however after implementing the validation the model's accuracy increased up to around 49.54%, which means it correctly predicts the quality class about half the time.The Kappa value suggests moderate predictive power.Since Naive Bayes assumes feature independence and our dataset might have interdependent features, from the next part we will use a machine learning model, Random Forest.
+
+### Random Forest
+
+Thinking of the chracteristic of our data which has a lot of out liers and class, we used Random Forest with cross validation. Furthermore We converted the 'quality' variable into a factor with defined levels. This step is crucial for categorical data in classification problems.
+
+Random Forest, an ensemble learning method, uses multiple decision trees to make better predictions than a single tree. So we use 500 trees with the expecation of enhancing model accuracy and generalization.
+
+```{r}
+train_data <- as.data.frame(train_data)
+test_data <- as.data.frame(test_data)
+
+unique_quality_levels <- sort(unique(balanced_data$quality))
+train_data$quality <- factor(train_data$quality, levels = unique_quality_levels)
+test_data$quality <- factor(test_data$quality, levels = unique_quality_levels)
+
+
+rf_model <- randomForest(quality ~ ., data = train_data, ntree = 500)
+rf_pred <- predict(rf_model, test_data)
+rf_pred <- factor(rf_pred, levels = unique_quality_levels)
+
+
+conf_matrix <- confusionMatrix(rf_pred, test_data$quality)
+print(conf_matrix)
+fitControl <- trainControl(method = "cv", number = 5)  # 5-fold cross-validation
+cv_rf_model <- train(quality ~ ., data = train_data, method = "rf", trControl = fitControl, tuneLength = 5)
+print(cv_rf_model)
+
+
+```
+#### Interpretation
+
+- Confusion Matrix, and overall statistic
+Our model shows an accuracy of 80.4% and 95% confidence in true accuracy. Moreover the Kappa value which measures the agreement of prediction with true values, shows around 0.77 which can be indicated to have a good predictive power.
+
+- Statistics by Class
+When we look up the result by each class individually, we can see that our model is particulary effective in predicting certain classes such as classes 3 and 9.
+However, the model has varying levels of effectiveness across different classes, as indicated by the differences in sensitivity, specificity, and other metrics.The choice of mtry = 2 suggests that using two variables at each split in the trees was the most effective for this model.
+
+
+# Regression
+
+Now for the part of regression we are going to try to find the elements that mostly influence the quality of the wine. We are going to use several regression models to decide which one of them gives us the best result and to get a conclusion about how the rest of the variables affect the quality of the wine.
+
+
+import all the libraries:
+
+```{r}
+library(leaflet)
+library(tidyverse)
+library(MASS)
+library(caret)
+library(MASS)
+library(olsrr)
+
+```
+
+The first step is always to split the data. We decided to split it 75% train and 25% test. Also, we transpormed the variable type into a binary variable to use it in our models.
+
+```{r}
+wine.df$type <- ifelse(wine.df$type == "red", 1, 0)
+in_train <-
+  createDataPartition(wine.df$alcohol, p = 0.75, list = FALSE)
+training <- wine.df[in_train, ]
+testing <- wine.df[-in_train, ]
+nrow(training)
+nrow(testing)
+```
+
+Then, we start by doing a simple linear regression and plotting it. As the alcohol and quality are very positively correlated, we are going to use those variables first.
+
+```{r}
+
+qualityFit <- lm(quality ~ alcohol, data = training)
+predictedQuality <- predict(qualityFit, newdata=testing)
+predictedQualityRounded <- round(predictedQuality)
+correlationQuality <- cor(testing$quality, predictedQualityRounded)
+rSquaredQuality <- correlationQuality^2
+cat("Correlation:", correlationQuality, "\n")
+cat("R-squared:", rSquaredQuality, "\n")
+
+
+```
+we get a positive correlation between the two of them.
+
+Now we check the relation between density and alcohol
+
+```{r}
+linFit <- lm(density ~ alcohol, data = training)
+predictedDensity <- predict(linFit, newdata=testing)
+
+correlationDensity <- cor(testing$density, predictedDensity)
+rSquaredDensity <- correlationDensity^2
+
+
+cat("Correlation:", correlationDensity, "\n")
+cat("R-squared:", rSquaredDensity, "\n")
+
+
+```
+
+Same thing happens, we get a small positive correlation but actually the variability explained by the model is very low so now we try using more complex models.
+
+
+### Multiple regression:
+
+```{r}
+linFit <- lm(quality ~ alcohol + volatile.acidity + chlorides + free.sulfur.dioxide + total.sulfur.dioxide + density + pH + sulphates, data = training)
+summary(linFit)
+```
+
+From this we got that this is not the best model as there is only about 30% of the variances informed, this could mean that we should include some other variables here. Also, we obtained that ph has no significant relation to the quality. On the other hand, this model suggest that the higher the alcohol the better and the less volatile.acidity the better. Also, the density seems to be very significant to the result.
+
+```{r}
+pr.multiple = predict(linFit, newdata=testing)
+cor(testing$quality, pr.multiple)^2
+
+print(dim(testing))
+
+```
+
+Again, we are in the same point as before the model works but there is room for improvement.
+
+After this first approach lets analyse, which variables are the most significant for the variable quality. As density has a great influence in the variable quality, we try to find the best model for it.
+
+```{r}
+linFitQuality <- lm(density ~ fixed.acidity + volatile.acidity + citric.acid + residual.sugar + chlorides + free.sulfur.dioxide + total.sulfur.dioxide + alcohol + pH + sulphates + quality + type, data = training)
+
+
+ols_step_best_subset(linFitQuality)
+
+names(training)
+
+```
+
+Therefore, from this table we got that the best models would be  10, 11 or 12 due to it's values. we see that R^2 is relatively high, and the AIC and BIC are the lowest.
+
+```{r}
+model = density ~ fixed.acidity + volatile.acidity + citric.acid + residual.sugar +
+  free.sulfur.dioxide + alcohol + pH + sulphates + quality + type
+benchFitQuality <- lm(density ~ ., data = training)
+
+predictionsQuality <- predict(benchFitQuality, newdata = testing)
+
+corQualitySquared <- cor(testing$density, predictionsQuality) ^ 2
+corQualitySquared
+
+RMSEQuality <- sqrt(mean((predictionsQuality - testing$density) ^ 2))
+RMSEQuality
+
+```
+
+we obtained that the model does very good for the density as the r^2 is very high and the RME is very low. We have to be careful because there is a chance of overfitting so we create a cross validation control for out future models.
+
+
+```{r}
+ctrl <- trainControl(method = "repeatedcv", 
+                     number = 10, repeats = 1)
+
+test_results <- data.frame(density = testing$density)
+```
+
+### Linear regression
+
+
+```{r}
+lm_tune <- train(model, data = training, 
+                 method = "lm", 
+                 preProc=c('scale', 'center'),
+                 trControl = ctrl)
+lm_tune
+```
+
+
+
+```{r}
+test_results$lm <- predict(lm_tune, testing)
+postResample(pred = test_results$lm,  obs = test_results$density)
+```
+
+
+```{r}
+qplot(test_results$lm, test_results$density) +
+  labs(title = "Linear Regression Observed VS Predicted", x = "Predicted", y = "Observed") + geom_abline(intercept = 0, slope = 1, colour = "hotpink") + theme_bw()
+
+
+missing_rows <- which(!complete.cases(test_results$lm, test_results$density))
+
+print(test_results[missing_rows, c("lm", "density")])
+
+```
+We are in the same line as before, the model seems to be very good. 
+
+Let's see if it performs the same with other methods
+
+### Forward regression
+
+
+```{r}
+
+for_tune <- train(
+  model,
+  data = training,
+  method = "leapForward",
+  tuneLength = 10,
+  preProc = c('scale', 'center'),
+  trControl = ctrl
+)
+
+
+
+for_tune
+plot(for_tune)
+
+```
+
+From this graph we can see that a model with 4 or 5 predictors will be our most optimal one.
+
+```{r}
+coef(for_tune$finalModel, for_tune$bestTune$nvmax)
+
+```
+
+
+```{r}
+test_results$frw <- predict(for_tune, testing)
+postResample(pred = test_results$frw,  obs = test_results$density)
+
+```
+
+
+
+```{r}
+qplot(test_results$frw, test_results$density) +
+  labs(title = "Forward Regression Observed VS Predicted", x = "Predicted", y =
+         "Observed") +
+  geom_abline(intercept = 0,
+              slope = 1,
+              colour = "hotpink") +
+  theme_bw()
+```
+
+
+### Backward regression
+
+
+based on our previous analysis we now update the model to 5 predictors and proceed with the analysis.
+
+```{r}
+model = density ~ fixed.acidity + volatile.acidity + residual.sugar + alcohol + sulphates
+back_tune <- train(
+  model,
+  data = training,
+  method = "leapBackward",
+  tuneLength = 5,
+  preProc = c('scale', 'center'),
+  trControl = ctrl
+)
+back_tune
+plot(back_tune)
+```
+
+
+```{r}
+coef(back_tune$finalModel, back_tune$bestTune$nvmax)
+```
+
+```{r}
+test_results$bw <- predict(back_tune, testing)
+postResample(pred = test_results$bw,  obs = test_results$density)
+```
+
+```{r}
+qplot(test_results$bw, test_results$density) +
+  labs(title = "Backward Regression Observed VS Predicted", x = "Predicted", y =
+         "Observed") +
+  geom_abline(intercept = 0,
+              slope = 1,
+              colour = "hotpink") +
+  theme_bw()
+```
+
+In this case, our numbers vary a little bit. We now have a slightly smaller R^2 but we still have that 5 predictors are the best number. Also, we don't have overfitting as r^2 is maximized and RMSE is minimized.
+
+### Stepwise regression
+
+```{r}
+step_tune <- train(
+  model,
+  data = training,
+  method = "leapSeq",
+  preProc = c('scale', 'center'),
+  tuneLength = 5,
+  trControl = ctrl
+)
+plot(step_tune)
+
+coef(step_tune$finalModel, step_tune$bestTune$nvmax)
+
+test_results$seq <- predict(step_tune, testing)
+postResample(pred = test_results$seq,  obs = test_results$density)
+
+```
+
+To sum up, until this point, there is no clear method that stands out, all of them give very good results.
+
+### Ridge regression
+
+
+```{r}
+
+ridge_grid <- expand.grid(lambda = seq(0, .1, length = 100))
+
+
+ridge_tune <- train(
+  model,
+  data = training,
+  method = 'ridge',
+  tuneGrid = ridge_grid,
+  preProc = c('scale', 'center'),
+  trControl = ctrl
+)
+plot(ridge_tune)
+
+
+ridge_tune$bestTune
+
+test_results$ridge <- predict(ridge_tune, testing)
+
+postResample(pred = test_results$ridge,  obs = test_results$density)
+
+```
+
+As before, we obtain very good results with a R^2 close to 0.9 and an error very close to 0.
+
+
+### Lasso
+
+```{r}
+lasso_grid <- expand.grid(fraction = seq(.01, 1, length = 100))
+
+lasso_tune <- train(
+  model,
+  data = training,
+  method = 'lasso',
+  preProc = c('scale', 'center'),
+  tuneGrid = lasso_grid,
+  trControl = ctrl
+)
+plot(lasso_tune)
+
+lasso_tune$bestTune
+
+test_results$lasso <- predict(lasso_tune, testing)
+postResample(pred = test_results$lasso,  obs = test_results$density)
+
+``` 
+
+### Elastic Net
+
+```{r}
+lambda_seq <- exp(seq(log(0.001), log(0.1), length.out = 100))
+elastic_grid <-
+  expand.grid(alpha = seq(0, 1, length.out = 10), lambda = lambda_seq)
+
+glmnet_tune <- train(
+  model,
+  data = training,
+  method = 'glmnet',
+  preProc = c('scale', 'center'),
+  tuneGrid = elastic_grid,
+  trControl = ctrl
+)
+
+plot(glmnet_tune)
+print(glmnet_tune$bestTune)
+
+test_results$glmnet <- predict(glmnet_tune, testing)
+performance <-
+  postResample(pred = test_results$glmnet, obs = testing$density)
+
+
+print(performance)
+```
+
+The graph shows that the best model is not too simple nor too complex. It has a good regularization (lambda around 0.02 to 0.04). This model can make good predictions without being too strict nor too loose. 
+
+### Machine Learning tools
+
+#### kNN
+
+
+```{r}
+neighbors_grid <- expand.grid(k = seq(1, 20, by = 1))
+
+
+knn_tune <- train(
+  model,
+  data = training,
+  method = "knn",
+  preProc = c('scale', 'center'),
+  tuneGrid = neighbors_grid,
+  trControl = ctrl
+)
+
+
+plot(knn_tune)
+
+
+test_results$knn <- predict(knn_tune, testing)
+performance <-
+  postResample(pred = test_results$knn, obs = testing$density)
+
+
+print(performance)
+```
+
+From the graph we get that the optimal number of neighbors is 7. And in terms of the performance we still are in good terms.
+
+#### Random Forests
+
+```{r}
+tuneGrid <- expand.grid(mtry = 2:5)
+
+rf_tune <- train(
+  model,
+  data = training,
+  method = "rf",
+  preProc = c('scale', 'center'),
+  trControl = ctrl,
+  ntree = 100,
+  tuneGrid = tuneGrid,
+  importance = TRUE
+)
+
+plot(rf_tune)
+test_results$rf <- predict(rf_tune, testing)
+performance <-
+  postResample(pred = test_results$rf, obs = test_results$density)
+
+
+print(performance)
+
+var_imp <- varImp(rf_tune, scale = TRUE)
+plot(var_imp, main = "Scaled Variable Importance")
+```
+
+From the first graph we get that the model performs better for smaller predictors. Also, the second graph shows that the variable alcohol has the highest important score with a significant difference. Therefore, we can say as previously that the alcohol variable is the most significant one in terms of density.
+
+#### Gradient Boosting
+
+```{r}
+
+xgb_tune <- train(
+  model,
+  data = training,
+  method = "xgbTree",
+  preProc = c('scale', 'center'),
+  verbosity = 0,
+  trControl = ctrl
+)
+
+test_results$xgb <- predict(xgb_tune, testing)
+
+postResample(pred = test_results$xgb,  obs = test_results$density)
+```
+
+#### Ensemble
+
+
+```{r}
+apply(test_results, 2, function(x)
+  mean(abs(x - test_results$density)))
+
+```
+
+From this, we obtain really small errors which indicates a very good performance of the models
+
+
+```{r}
+
+test_results$comb = (test_results$knn + test_results$rf + test_results$xgb) /
+  3
+
+
+resample_result = postResample(pred = test_results$comb,  obs = test_results$density)
+
+
+print(resample_result)
+```
+
+
+
+### Final predictions
+
+```{r}
+yhat = exp(test_results$comb)
+
+hist(yhat, col = "hotpink")
+
+```
+This histogram shows that the combined model tends to predict values within a specific range with a central tendency around 2.71. Also, we can see that the shape of the distribution looks approximately normal, which suggests that the predictions of yhat are centered around a mean value with a symmetric spread on both sides. Final, we can point out that the range of predictions is relatively narrow (from about 2.69 to 2.73), indicating that most predictions are close to each other which means high precision
+
+
+### Prediction Intervals
+
+```{r}
+y = exp(test_results$density)
+error = y - yhat
+hist(error, col = "hotpink")
+```
+
+From this graph we see that there is a balance between positive and negative values which means that the model nether overestimates or underestimates the prediction as it is centred around zero. Most of the errors are close to zero, suggesting that the model predictions are generally accurate. We also have narrow spread, that tells us that the model's predictions are consistently close to the actual values. So, to sum up, this histogram suggests that the model's predictions are quite accurate, with a small error margin, and that there is no evidence of systematic bias in the predictions.
+
+
+```{r}
+
+noise = error[1:100]
+
+
+lwr = yhat[101:length(yhat)] + quantile(noise, 0.05, na.rm = TRUE)
+upr = yhat[101:length(yhat)] + quantile(noise, 0.95, na.rm = TRUE)
+
+predictions = data.frame(
+  real = y[101:length(y)],
+  fit = yhat[101:length(yhat)],
+  lwr = lwr,
+  upr = upr
+)
+
+
+predictions = predictions %>% mutate(out = factor(if_else(real < lwr |
+                                                            real > upr, "Outside", "Inside")))
+
+
+ggplot(predictions, aes(x = fit, y = real)) +
+  geom_point(aes(color = out)) + theme(legend.position = "none") +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.3) +
+  labs(title = "Prediction intervals", x = "Predicted density", y = "Actual density")
+
+```
+
+The points seem to be tightly clustered along the line where the actual density equals the predicted density, indicating a good fit. The model also doesn't seem to have a strong bias. Furthermore, we can see that the noise remains constant across the range of predictions. The shaded area has constant width therefore indicating the same level of confidence in the predictions across different values. So, after all this analysis we can say that the model predicts the actual density quite well, with a high level of confidence that the predictions will fall within a narrow range of the true values.
+
+### Final thoughts
+
+So, our initial objective was to predict if a wine would be good or not based on its density. We started with the basic simple linear model, then we went up from there to more complex models, like random forests, KNN, and XGBoost. This way, we could see how different factors affect the wine quality, and how to make the best predictions.
+
+we were paid special attention to how well our models worked. we adjusted some settings and used some advanced methods to make your predictions better, without making our models too complicated or too specific. We checked how accurate our predictions were, by comparing them to the real values. From this we got that the errors are very close to 0, which means our predictions were close.
+
+To make our predictions even better, you combined some of the models by taking the average of their predictions. This allowed us to use the strengths of each model and avoid the weaknesses which made our predictions more reliable.
+
+Every method we used confirmed that we got really good results with about 90% of the data explained by the model. To put this into wine terms, we discovered that for the wine to be better the level of density has to be high and the most significant element for the density to be high is that the level of alcohol has to be high. Therefore, to make this simpler we could say that mainly for a wine to be good has to have a high level of alcohol in comparison to the rest of elements.
+
